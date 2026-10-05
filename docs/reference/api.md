@@ -347,18 +347,18 @@ also carries each change as an event, so a client does not have to poll:
   `session.pending` follows), or `session_gone` (the session is no longer
   active).
 
-Each fires once per transition, not once per detection poll. Detection
-runs while at least one city or supervisor event stream for the city is
-open, every 2 seconds, and immediately after a successful `respond`; it
-uses the same probe as `GET .../pending`, so the two always agree.
+Each fires once per transition, not once per detection pass. The city's
+controller detects them whether or not any client is watching, so orders
+and agents can react to them too. It checks every active session every 5
+seconds, re-reading a session's screen only when its output changed since
+the last read, and immediately after a successful `respond`. Its probe is
+the runtime's own pending detector, the same one `GET .../pending` uses.
 
 Resuming: a client that reconnects with `Last-Event-ID` (or `after_seq` /
 `after_cursor`) gets the transitions it missed and needs no extra call.
-Transitions are written to the city event log, and when detection
-restarts — after a supervisor restart, or because the reconnecting client
-is the only watcher — it emits the difference between what it last
-announced and what is pending now. An interaction that appeared and was
-answered while no stream watched the city is never announced. A client
+Transitions are written to the city event log. When the controller
+restarts it rebuilds what it has announced from that log, so it announces
+nothing twice and clears what was answered while it was down. A client
 connecting without a cursor starts at the head of the log, so it should
 read `GET /v0/city/{cityName}/pending` once and apply events from there.
 

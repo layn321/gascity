@@ -73,6 +73,9 @@ type controllerState struct {
 	// onDeathGate is the city runtime's on_death start interlock, set when
 	// its inventory lane starts; nil holds nothing.
 	onDeathGate atomic.Pointer[onDeathGate]
+	// pendingPoke pokes the city runtime's pending-interaction lane; nil
+	// when the lane is not running (pending_interaction_lane.go).
+	pendingPoke atomic.Pointer[func(sessionID string)]
 	cfg         *config.City
 	// rawCfg is the raw (pre-expansion, site-bound) config snapshot captured
 	// at the same generation as cfg. It is the basis the mutation gate uses
