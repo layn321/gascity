@@ -48,6 +48,14 @@ func (s *nativeDoltRawPanicStorage) IssueReader() (issueops.Reader, error) {
 	return rawPanicReader{storage: s}, nil
 }
 
+// WorkspaceConfig stands in for the role nativeReadIssuePrefix uses. It
+// answers every key as unset (empty value, nil error), the same contract the
+// retired raw storage.GetConfig primitive gave: nothing in this double's
+// fixture models a configured issue prefix, so there is nothing to read back.
+func (s *nativeDoltRawPanicStorage) WorkspaceConfig() (issueops.WorkspaceConfig, error) {
+	return rawPanicWorkspaceConfig{}, nil
+}
+
 // RunInTransaction answers the way a backend with no native transaction does:
 // a typed *beadslib.ErrUnsupported, raised BEFORE the callback ever runs. This
 // is what routes Store.Tx onto runTxAsBatch (native_dolt_store_batch_tx.go),
@@ -55,6 +63,26 @@ func (s *nativeDoltRawPanicStorage) IssueReader() (issueops.Reader, error) {
 // raw tx.* call — the door this double exists to prove nothing bypasses.
 func (s *nativeDoltRawPanicStorage) RunInTransaction(context.Context, string, func(beadslib.Transaction) error) error {
 	return &beadslib.ErrUnsupported{Op: "RunInTransaction", Backend: "raw-panic-double"}
+}
+
+type rawPanicWorkspaceConfig struct{}
+
+var _ issueops.WorkspaceConfig = rawPanicWorkspaceConfig{}
+
+func (rawPanicWorkspaceConfig) GetSetting(_ context.Context, req issueops.GetSettingRequest) (issueops.SettingResult, error) {
+	return issueops.SettingResult{Key: req.Key}, nil
+}
+
+func (rawPanicWorkspaceConfig) ListSettings(context.Context, issueops.ListSettingsRequest) (issueops.ListSettingsResult, error) {
+	panic("rawPanicWorkspaceConfig: ListSettings not exercised by the conditional-write cluster")
+}
+
+func (rawPanicWorkspaceConfig) SetSetting(context.Context, issueops.SetSettingRequest) (issueops.SetSettingResult, error) {
+	panic("rawPanicWorkspaceConfig: SetSetting not exercised by the conditional-write cluster")
+}
+
+func (rawPanicWorkspaceConfig) UnsetSetting(context.Context, issueops.UnsetSettingRequest) (issueops.UnsetSettingResult, error) {
+	panic("rawPanicWorkspaceConfig: UnsetSetting not exercised by the conditional-write cluster")
 }
 
 type rawPanicLifecycle struct{ storage *nativeDoltRawPanicStorage }
@@ -318,6 +346,17 @@ func TestNativeDoltStoreOtherPortedPathsNeverReachRawStorage(t *testing.T) {
 		}
 		if result.IDs["n1"] == "" {
 			t.Fatalf("ApplyGraphPlan result = %+v, want a minted id for key %q", result, "n1")
+		}
+	})
+
+	t.Run("GetConfig issue-prefix read", func(t *testing.T) {
+		storage := newNativeDoltRawPanicStorage(openIssueForConditionalTest())
+		prefix, err := nativeReadIssuePrefix(context.Background(), storage)
+		if err != nil {
+			t.Fatalf("nativeReadIssuePrefix: %v", err)
+		}
+		if prefix != "" {
+			t.Fatalf("nativeReadIssuePrefix = %q, want empty: this double's WorkspaceConfig answers every key unset", prefix)
 		}
 	})
 
