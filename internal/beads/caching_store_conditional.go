@@ -64,8 +64,10 @@ func (h *cachingAtomicConditionalCloser) CloseWithMetadataIfMatch(id string, exp
 		return Bead{}, ErrConditionalWriteUnsupported
 	}
 	before := h.cache.currentMutationSeq()
+	h.cache.beginCloseIntent(id)
 	closed, err := closer.CloseWithMetadataIfMatch(id, expectedRevision, metadata)
 	if err != nil {
+		h.cache.endCloseIntent(id)
 		h.cache.applyConditionalWriteFailure(id, err)
 		return Bead{}, err
 	}
@@ -192,7 +194,13 @@ func (c *CachingStore) UpdateIfMatch(id string, expectedRevision int64, opts Upd
 	if !ok {
 		return ErrConditionalWriteUnsupported
 	}
+	if updateCloses(opts) {
+		c.beginCloseIntent(id)
+	}
 	if err := writer.UpdateIfMatch(id, expectedRevision, opts); err != nil {
+		if updateCloses(opts) {
+			c.endCloseIntent(id)
+		}
 		c.applyConditionalWriteFailure(id, err)
 		return err
 	}
@@ -202,7 +210,7 @@ func (c *CachingStore) UpdateIfMatch(id string, expectedRevision int64, opts Upd
 	// close, announced as bead.closed when it owns the close, as Update does.
 	eventType := "bead.updated"
 	var ev conditionalEviction
-	if opts.Status != nil && *opts.Status == "closed" {
+	if updateCloses(opts) {
 		var own bool
 		ev, own = c.evictForConditionalClose(id)
 		if own {
@@ -236,7 +244,9 @@ func (c *CachingStore) CloseIfMatch(id string, expectedRevision int64) error {
 	if !ok {
 		return ErrConditionalWriteUnsupported
 	}
+	c.beginCloseIntent(id)
 	if err := writer.CloseIfMatch(id, expectedRevision); err != nil {
+		c.endCloseIntent(id)
 		c.applyConditionalWriteFailure(id, err)
 		return err
 	}
@@ -407,7 +417,7 @@ func (c *CachingStore) evictForConditionalWrite(id string) conditionalEviction {
 func (c *CachingStore) evictForConditionalClose(id string) (conditionalEviction, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	own := c.claimCloseLocked(id, true)
+	own := c.claimCloseIntentLocked(id, true)
 	return c.evictForConditionalWriteLocked(id), own
 }
 
