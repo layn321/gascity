@@ -1113,6 +1113,12 @@ var verifyManagedDoltDatabaseExistsAfterInit = func(cityPath, dir, dbName string
 		// that DB is already proven by bd init's own connection.
 		return nil
 	}
+	if scopeHasExternalDoltTarget(cityPath, dir) {
+		// A rig whose own endpoint is external (explicit rig dolt_host/dolt_port)
+		// keeps its database on that server, not in the city's managed-local
+		// catalog, even when the city itself is managed-local.
+		return nil
+	}
 	port := currentResolvableManagedDoltPort(cityPath)
 	if port == "" {
 		return nil
@@ -2393,6 +2399,17 @@ func waitForBeadsScopeReadyAfterRecovery(ctx context.Context, scopeRoot, cityPat
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+// scopeHasExternalDoltTarget reports whether the scope at dir carries its own
+// canonical external Dolt endpoint. Scopes that inherit the city endpoint, or
+// have no authoritative config, report false.
+func scopeHasExternalDoltTarget(cityPath, dir string) bool {
+	if samePath(cityPath, dir) {
+		return false
+	}
+	target, ok, err := canonicalScopeDoltTarget(cityPath, dir)
+	return err == nil && ok && target.External
 }
 
 // isExternalDolt returns true when the city uses an explicitly configured
