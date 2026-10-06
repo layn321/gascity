@@ -2401,16 +2401,6 @@ func waitForBeadsScopeReadyAfterRecovery(ctx context.Context, scopeRoot, cityPat
 	}
 }
 
-// isExternalDolt returns true when the city uses an explicitly configured
-// (user-managed) Dolt server rather than the managed local one.
-//
-// Checks canonical city .beads config first, then falls back to deprecated
-// city.toml-derived registration only when the canonical file does not exist.
-// Env vars remain explicit per-process overrides for non-controller paths.
-// With canonical or compat config, any explicit host or port means
-// "user-managed" regardless of whether the host resolves to localhost.
-// Without config, the env-var fallback excludes localhost addresses for
-// backwards compatibility.
 // scopeHasExternalDoltTarget reports whether the scope at dir carries its own
 // canonical external Dolt endpoint. Scopes that inherit the city endpoint, or
 // have no authoritative config, report false.
@@ -2422,6 +2412,16 @@ func scopeHasExternalDoltTarget(cityPath, dir string) bool {
 	return err == nil && ok && target.External
 }
 
+// isExternalDolt returns true when the city uses an explicitly configured
+// (user-managed) Dolt server rather than the managed local one.
+//
+// Checks canonical city .beads config first, then falls back to deprecated
+// city.toml-derived registration only when the canonical file does not exist.
+// Env vars remain explicit per-process overrides for non-controller paths.
+// With canonical or compat config, any explicit host or port means
+// "user-managed" regardless of whether the host resolves to localhost.
+// Without config, the env-var fallback excludes localhost addresses for
+// backwards compatibility.
 func isExternalDolt(cityPath string) bool {
 	target, ok, err := resolvedRuntimeCityDoltTarget(cityPath, false)
 	return err == nil && ok && target.External
