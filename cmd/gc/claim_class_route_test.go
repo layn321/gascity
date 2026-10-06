@@ -497,9 +497,9 @@ func TestClassRoutedRestampSplitsOnResidency(t *testing.T) {
 // discovering that per-bead in the middle of a tick is what made a whole
 // `gc hook --claim` invocation terminal.
 //
-// *beads.SQLiteStore is the only production store with it; the other compiled-in
-// binding provider (beadsworkspace) opens a *beads.NativeDoltStore, which has
-// ReleaseIfCurrent and no Claim.
+// Both compiled-in binding engines (*beads.SQLiteStore and beadsworkspace's
+// *beads.NativeDoltStore) have it; this pins the refusal for any engine that
+// does not.
 func TestHookClaimClassRouteRefusesABindingThatCannotClaim(t *testing.T) {
 	route, err := newHookClaimClassRoute(claimRouteNoCASStore{Store: beads.NewMemStore()})
 	if !errors.Is(err, errClaimRouteBindingCannotClaim) {

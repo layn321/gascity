@@ -93,15 +93,19 @@ package main
 //
 // # A binding that cannot claim is a city fact, not a bead fault
 //
-// The CAS the routed claim acquires through is a capability: *beads.SQLiteStore
-// has the two-argument Claim and the other compiled-in binding provider's engine
-// (beadsworkspace over *beads.NativeDoltStore) does not, so the closed contract
-// answers ErrBeadsAdapterCapability rather than emulating it. That is a standing
-// property of the city's storage configuration, so it is refused at the DOOR —
+// The CAS the routed claim acquires through is a capability. Both compiled-in
+// binding engines serve it (*beads.SQLiteStore, and beadsworkspace's
+// *beads.NativeDoltStore through its claimer role, S5b-4); an engine without it
+// gets ErrBeadsAdapterCapability from the closed contract rather than an
+// emulation. That is a standing property of the city's storage configuration,
+// so a store that visibly lacks the method is refused at the DOOR —
 // newHookClaimClassRoute verifies it once, the way storebinding's
 // NewBeadsNudgeQueue verifies the same capability at construction — and
 // claimHookWork then runs unrouted with one loud line rather than failing every
-// claim of every bead in every store.
+// claim of every bead in every store. The door sees the store it is handed: a
+// forwarding wrapper (the CLI's emitting class store) always carries Claim, so
+// a claim-less engine behind one passes the door and is refused per call with
+// beads.ErrClaimUnsupported instead.
 //
 // If a refusal reaches a claim anyway, it is a per-BEAD skip and not a terminal
 // tick: the escalation only ran because a work store returned not-found, which
@@ -298,9 +302,11 @@ func hookClaimRouteVerdict(route *hookClaimClassRoute, err error, stderr io.Writ
 // already proved this session owns nothing there. The refusal is returned before
 // any write (the adapter's type assertion fails first), so nothing is
 // outstanding anywhere and the bead can be skipped exactly as the work-side
-// not-found is.
+// not-found is. beads.ErrClaimUnsupported is the same pre-write veto as a
+// forwarding wrapper reports it, for a claim-less engine the door probe could
+// not see behind the wrapper.
 func hookClaimBindingRefusedTheClaim(err error) bool {
-	return errors.Is(err, storebinding.ErrBeadsAdapterCapability)
+	return errors.Is(err, storebinding.ErrBeadsAdapterCapability) || errors.Is(err, beads.ErrClaimUnsupported)
 }
 
 // hookClaimBeadIsAWisp reports whether a routed claim failed because the

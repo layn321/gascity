@@ -1860,17 +1860,17 @@ func nativeReleaseRefused(err error) bool {
 // Distinguishing them needs a second read, because the claimer's own
 // ErrNotFound carries nothing to tell them apart by itself: when the
 // claimer's error resolves to issueops.ErrNotFound,
-// nativeClaimWispDisambiguationFindsRow asks the reader role for id, through
+// nativeClaimWispDisambiguationFindsWisp asks the reader role for id, through
 // the reader role, which — unlike the claimer — DOES resolve the wisp table
 // (issueops.Reader.Get's own doc comment: "A miss — for both the issue and
-// the wisp table — is ErrNotFound"). If Get finds the row, the only backend
-// state that explains both outcomes together is a wisp (an ordinary issue
-// would have let the claimer find it too), so this front door reports
-// ErrWispNotClaimable instead. If Get also misses, or itself errors, the
-// original ErrNotFound is returned unchanged — a transient failure on this
-// disambiguating read must never manufacture a wisp refusal that was never
-// actually decided, so it degrades to the pre-fix behavior rather than
-// guessing.
+// the wisp table — is ErrNotFound"). If Get finds the row and that row is
+// ephemeral, it is a wisp, so this front door reports ErrWispNotClaimable
+// instead. A non-ephemeral hit (an ordinary row created between the two
+// reads) is not a wisp. If Get misses, finds a non-ephemeral row, or itself
+// errors, the original ErrNotFound is returned unchanged — a transient
+// failure on this disambiguating read must never manufacture a wisp refusal
+// that was never actually decided, so it degrades to the pre-fix behavior
+// rather than guessing.
 //
 // THE DISAMBIGUATING READ GOES THROUGH THE storage HANDLE AND ctx CLAIM
 // ALREADY HOLDS, NEVER THROUGH s.Get (review fix, G1+G2 Opus pass). Claim
@@ -1915,7 +1915,7 @@ func (s *NativeDoltStore) Claim(id, assignee string) (Bead, bool, error) {
 			return Bead{}, false, nil
 		}
 		if errors.Is(err, issueops.ErrNotFound) {
-			if nativeClaimWispDisambiguationFindsRow(ctx, storage, id) {
+			if nativeClaimWispDisambiguationFindsWisp(ctx, storage, id) {
 				return Bead{}, false, fmt.Errorf("claiming bead %q: %w", id, ErrWispNotClaimable)
 			}
 		}
@@ -1931,21 +1931,21 @@ func (s *NativeDoltStore) Claim(id, assignee string) (Bead, bool, error) {
 	return bead, true, nil
 }
 
-// nativeClaimWispDisambiguationFindsRow asks the reader role for id using the
-// storage handle and ctx Claim already holds, and reports whether it found a
-// row. It deliberately does NOT go through s.Get/s.withReadRetry: see the
+// nativeClaimWispDisambiguationFindsWisp asks the reader role for id using the
+// storage handle and ctx Claim already holds, and reports whether it found an
+// ephemeral row. It deliberately does NOT go through s.Get/s.withReadRetry: see the
 // "THE DISAMBIGUATING READ" paragraph on Claim's doc comment above for why a
 // second, nested acquisition of s.mu from the same goroutine self-deadlocks.
 // Any failure here (including one that would ordinarily reconnect and retry)
 // is reported as "no row found," which is the documented, deliberate
 // degrade-to-pre-fix behavior, not a best-effort guess.
-func nativeClaimWispDisambiguationFindsRow(ctx context.Context, storage beadslib.Storage, id string) bool {
+func nativeClaimWispDisambiguationFindsWisp(ctx context.Context, storage beadslib.Storage, id string) bool {
 	reader, err := storage.IssueReader()
 	if err != nil {
 		return false
 	}
 	details, err := reader.Get(ctx, issueops.GetRequest{ID: id})
-	return err == nil && details != nil
+	return err == nil && details != nil && details.Ephemeral
 }
 
 // ErrWispNotClaimable names the refusal Claim reports for an id that exists

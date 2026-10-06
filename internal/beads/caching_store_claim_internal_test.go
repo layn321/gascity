@@ -22,9 +22,18 @@ type claimCapableBackingStore struct {
 	// separate, subsequent Get (CachingStore.Claim's post-claim refresh)
 	// failing — e.g. a transient read blip right after a successful write.
 	failGetAfterClaim bool
+	// onGetOnce, when set, runs once at the start of the next outside Get
+	// (CachingStore.Claim's post-claim refresh) and is then cleared, so a
+	// test can land a newer local write between the backing claim and the
+	// cache install.
+	onGetOnce func()
 }
 
 func (c *claimCapableBackingStore) Get(id string) (Bead, error) {
+	if hook := c.onGetOnce; hook != nil {
+		c.onGetOnce = nil
+		hook()
+	}
 	if c.failGetAfterClaim {
 		return Bead{}, errors.New("backing get unavailable")
 	}
@@ -268,5 +277,117 @@ func TestCachingStoreClaimColdCacheMarksRowDirtyWhenRefreshFails(t *testing.T) {
 	cache.mu.RUnlock()
 	if !isDirty {
 		t.Fatalf("cache.dirty[%s] after a cold claim whose post-claim refresh failed = false, want true (placeholder row must not be trusted as clean)", work.ID)
+	}
+}
+
+// TestCachingStoreClaimWarmCacheRefreshFailureCarriesClaimedRevision pins that
+// when the post-claim refresh fails on a cached row, the merged row Claim
+// returns carries the claimed row's revision, not the pre-claim one, so a
+// caller chaining a conditional write on it does not miss its own CAS.
+func TestCachingStoreClaimWarmCacheRefreshFailureCarriesClaimedRevision(t *testing.T) {
+	t.Parallel()
+
+	backing := &claimCapableBackingStore{Store: NewMemStore()}
+	work, err := backing.Create(Bead{Title: "claimable work", Labels: []string{"urgent"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	cache := NewCachingStoreForTest(backing, nil)
+	if err := cache.Prime(context.Background()); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+
+	backing.failGetAfterClaim = true
+	claimed, ok, err := cache.Claim(work.ID, "worker-1")
+	if err != nil || !ok {
+		t.Fatalf("Claim = (%v, %v, %v), want (bead, true, nil)", claimed, ok, err)
+	}
+	backing.failGetAfterClaim = false
+	current, err := backing.Get(work.ID)
+	if err != nil {
+		t.Fatalf("backing Get: %v", err)
+	}
+	if claimed.Revision != current.Revision {
+		t.Fatalf("claimed revision = %d, want the post-claim revision %d", claimed.Revision, current.Revision)
+	}
+	if len(claimed.Labels) != 1 {
+		t.Fatalf("claimed labels = %v, want the cached label kept", claimed.Labels)
+	}
+}
+
+// TestCachingStoreClaimFencedByNewerLocalWrite races a newer local write of
+// the same row into Claim's post-claim refresh. The fence must refuse the
+// claim's install: the newer row stays cached and dirty, and Claim still
+// reports the acquisition and notifies.
+func TestCachingStoreClaimFencedByNewerLocalWrite(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		newer func(t *testing.T, cache *CachingStore, id string)
+		check func(t *testing.T, cache *CachingStore, id string)
+	}{
+		{"newer_close", func(t *testing.T, cache *CachingStore, id string) {
+			if err := cache.Close(id); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		}, func(t *testing.T, cache *CachingStore, id string) {
+			cache.mu.RLock()
+			row := cache.beads[id]
+			_, dirty := cache.dirty[id]
+			cache.mu.RUnlock()
+			if row.Status != "closed" {
+				t.Fatalf("cached status = %q; the older claim install overwrote the newer close", row.Status)
+			}
+			if !dirty {
+				t.Fatalf("row %s not dirty after a fenced claim install", id)
+			}
+		}},
+		{"newer_delete", func(t *testing.T, cache *CachingStore, id string) {
+			if err := cache.Delete(id); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+		}, func(t *testing.T, cache *CachingStore, id string) {
+			cache.mu.RLock()
+			_, present := cache.beads[id]
+			cache.mu.RUnlock()
+			if present {
+				t.Fatalf("the older claim install resurrected deleted %s", id)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			backing := &claimCapableBackingStore{Store: NewMemStore()}
+			work, err := backing.Create(Bead{Title: "fenced claim"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			var events []string
+			cache := NewCachingStoreForTest(backing, func(eventType, beadID string, _ json.RawMessage) {
+				events = append(events, eventType+":"+beadID)
+			})
+			if err := cache.Prime(context.Background()); err != nil {
+				t.Fatalf("Prime: %v", err)
+			}
+			events = nil
+
+			backing.onGetOnce = func() { tc.newer(t, cache, work.ID) }
+			claimed, ok, err := cache.Claim(work.ID, "worker-1")
+			if err != nil || !ok {
+				t.Fatalf("Claim = (%v, %v, %v), want (bead, true, nil)", claimed, ok, err)
+			}
+			if backing.onGetOnce != nil {
+				t.Fatal("Claim never refreshed; the race was not exercised")
+			}
+			if claimed.Assignee != "worker-1" {
+				t.Fatalf("claimed assignee = %q, want worker-1", claimed.Assignee)
+			}
+			if !stringSliceContains(events, "bead.updated:"+work.ID) {
+				t.Fatalf("events = %v, want bead.updated for the claimed bead", events)
+			}
+			tc.check(t, cache, work.ID)
+		})
 	}
 }

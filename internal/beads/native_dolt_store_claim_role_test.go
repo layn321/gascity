@@ -171,6 +171,29 @@ func TestClaimMapsAWispIDToErrWispNotClaimableNotErrNotFound(t *testing.T) {
 	}
 }
 
+// TestClaimMapsANonEphemeralReaderHitToErrNotFound pins that the wisp
+// verdict requires the reader's row to be ephemeral: an ordinary row the
+// reader finds after the claimer missed it (one created between the two
+// reads) is not a wisp, so Claim keeps the claimer's ErrNotFound.
+func TestClaimMapsANonEphemeralReaderHitToErrNotFound(t *testing.T) {
+	spy := &claimRoleSpy{
+		err:       issueops.ErrNotFound,
+		getResult: &issueops.IssueDetails{Issue: beadslib.Issue{ID: "gc-1"}},
+	}
+	store := newNativeDoltStoreForTest(spy)
+
+	_, claimed, err := store.Claim("gc-1", "worker-1")
+	if claimed {
+		t.Fatal("claimed = true on a not-found claim")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want it to wrap beads.ErrNotFound", err)
+	}
+	if errors.Is(err, ErrWispNotClaimable) {
+		t.Errorf("error = %v, want it NOT to call a non-ephemeral row a wisp", err)
+	}
+}
+
 // TestClaimSurfacesATransportFailure pins that anything other than the two
 // named conflict sentinels (or a not-found) travels as a real error, exactly
 // like ReleaseIfCurrent's equivalent guard — a transport failure folded into
@@ -235,7 +258,7 @@ func (s *claimBlockingSpy) Claim(_ context.Context, _ issueops.ClaimRequest) (is
 // while Claim holds its outer RLock permanently wedges Claim's nested RLock
 // behind that writer, which itself can never proceed because Claim's outer
 // RLock is never released. The fix reads the disambiguating row off the
-// storage handle and ctx Claim already has (nativeClaimWispDisambiguationFindsRow),
+// storage handle and ctx Claim already has (nativeClaimWispDisambiguationFindsWisp),
 // never re-taking s.mu, so neither side of this can block the other.
 func TestClaimDoesNotDeadlockWhenAPendingWriterArrivesWhileItHoldsItsReadLock(t *testing.T) {
 	spy := &claimBlockingSpy{inClaim: make(chan struct{}), proceed: make(chan struct{})}
@@ -289,7 +312,7 @@ func (claimReconnectSpy) Close() error { return nil }
 // granted: a goroutine cannot upgrade its own read lock to a write lock, and
 // nothing else can release the RLock it holds. The fix never calls
 // s.Get/withReadRetry for this read at all (see Claim's doc comment and
-// nativeClaimWispDisambiguationFindsRow), so a transient error here simply
+// nativeClaimWispDisambiguationFindsWisp), so a transient error here simply
 // degrades to the pre-fix "report the original ErrNotFound" outcome instead
 // of reaching reconnect.
 func TestClaimDoesNotSelfDeadlockWhenTheDisambiguationReadNeedsAReconnect(t *testing.T) {
