@@ -66,6 +66,32 @@ func TestChooseManagedDoltPortExternalEnvBeatsLiveManagedState(t *testing.T) {
 	}
 }
 
+// B1 (review fix): a city configured external uses its own configured port,
+// not an ambient GC_DOLT_PORT, even with a live managed state present.
+func TestChooseManagedDoltPortExternalCityConfigPortBeatsEnv(t *testing.T) {
+	cityPath := t.TempDir()
+	clearManagedDoltRuntimeEnvForTest(t)
+	writeReachableProviderManagedDoltState(t, cityPath)
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "config.yaml"), []byte(strings.Replace(externalRigBeadsConfig, "gc.endpoint_origin: explicit", "gc.endpoint_origin: city_canonical", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_DOLT_HOST", "")
+	t.Setenv("GC_DOLT_PORT", "4406")
+	if !isExternalDolt(cityPath) {
+		t.Fatal("precondition: city must be external")
+	}
+	got, err := chooseManagedDoltPort(cityPath, "")
+	if err != nil {
+		t.Fatalf("chooseManagedDoltPort: %v", err)
+	}
+	if got != "3306" {
+		t.Fatalf("chooseManagedDoltPort = %q, want configured city port 3306 (env was 4406)", got)
+	}
+}
+
 // B2: a rig bound to an external Dolt must not be verified against the city's
 // managed-local catalog.
 func TestVerifyManagedDoltDatabaseSkipsExternalRigUnderManagedCity(t *testing.T) {
