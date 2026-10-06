@@ -114,7 +114,7 @@ func TestCachingStoreClaimWriteThroughKeepsCachedDependencies(t *testing.T) {
 	afterDeps := cloneDeps(cache.deps[work.ID])
 	cache.mu.RUnlock()
 	if len(afterDeps) != 1 || afterDeps[0].DependsOnID != target.ID {
-		t.Fatalf("cache.deps[%s] after a successful claim = %+v, want the pre-claim dependency edge untouched (depsKeepCached)", work.ID, afterDeps)
+		t.Fatalf("cache.deps[%s] after a successful claim = %+v, want the pre-claim dependency edge preserved", work.ID, afterDeps)
 	}
 	if !stringSliceContains(events, "bead.updated:"+work.ID) {
 		t.Fatalf("events = %v, want bead.updated for the claimed bead", events)
@@ -288,13 +288,22 @@ func TestCachingStoreClaimWarmCacheRefreshFailureCarriesClaimedRevision(t *testi
 	t.Parallel()
 
 	backing := &claimCapableBackingStore{Store: NewMemStore()}
-	work, err := backing.Create(Bead{Title: "claimable work", Labels: []string{"urgent"}})
+	work, err := backing.Create(Bead{
+		Title:    "claimable work",
+		Labels:   []string{"urgent"},
+		Metadata: map[string]string{"phase": "queued"},
+	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	cache := NewCachingStoreForTest(backing, nil)
 	if err := cache.Prime(context.Background()); err != nil {
 		t.Fatalf("Prime: %v", err)
+	}
+	// The claimed row carries metadata the cached row does not yet hold, so
+	// only the refresh-failure merge's Metadata copy can surface it.
+	if err := backing.SetMetadata(work.ID, "phase", "claimed"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
 	}
 
 	backing.failGetAfterClaim = true
@@ -313,25 +322,38 @@ func TestCachingStoreClaimWarmCacheRefreshFailureCarriesClaimedRevision(t *testi
 	if len(claimed.Labels) != 1 {
 		t.Fatalf("claimed labels = %v, want the cached label kept", claimed.Labels)
 	}
+	if got := claimed.Metadata["phase"]; got != "claimed" {
+		t.Fatalf("claimed metadata phase = %q, want the claimed row's value %q", got, "claimed")
+	}
+	claimed.Metadata["phase"] = "mutated-by-caller"
+	cache.mu.RLock()
+	cachedPhase := cache.beads[work.ID].Metadata["phase"]
+	cache.mu.RUnlock()
+	if cachedPhase != "claimed" {
+		t.Fatalf("cached metadata phase = %q after mutating the returned row, want %q (returned map must not alias the cache)", cachedPhase, "claimed")
+	}
 }
 
 // TestCachingStoreClaimFencedByNewerLocalWrite races a newer local write of
 // the same row into Claim's post-claim refresh. The fence must refuse the
 // claim's install: the newer row stays cached and dirty, and Claim still
-// reports the acquisition and notifies.
+// reports the acquisition, returns the claim's own row, and notifies.
 func TestCachingStoreClaimFencedByNewerLocalWrite(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name  string
 		newer func(t *testing.T, cache *CachingStore, id string)
-		check func(t *testing.T, cache *CachingStore, id string)
+		check func(t *testing.T, cache *CachingStore, id string, claimed Bead)
 	}{
 		{"newer_close", func(t *testing.T, cache *CachingStore, id string) {
 			if err := cache.Close(id); err != nil {
 				t.Fatalf("Close: %v", err)
 			}
-		}, func(t *testing.T, cache *CachingStore, id string) {
+		}, func(t *testing.T, cache *CachingStore, id string, claimed Bead) {
+			if claimed.Status != "in_progress" {
+				t.Fatalf("returned status = %q, want the acquisition row's in_progress, not the raced close", claimed.Status)
+			}
 			cache.mu.RLock()
 			row := cache.beads[id]
 			_, dirty := cache.dirty[id]
@@ -342,12 +364,15 @@ func TestCachingStoreClaimFencedByNewerLocalWrite(t *testing.T) {
 			if !dirty {
 				t.Fatalf("row %s not dirty after a fenced claim install", id)
 			}
+			if claimed.Revision == 0 || claimed.Revision >= row.Revision {
+				t.Fatalf("returned revision = %d, want the claim's own revision, below the raced close's %d", claimed.Revision, row.Revision)
+			}
 		}},
 		{"newer_delete", func(t *testing.T, cache *CachingStore, id string) {
 			if err := cache.Delete(id); err != nil {
 				t.Fatalf("Delete: %v", err)
 			}
-		}, func(t *testing.T, cache *CachingStore, id string) {
+		}, func(t *testing.T, cache *CachingStore, id string, _ Bead) {
 			cache.mu.RLock()
 			_, present := cache.beads[id]
 			cache.mu.RUnlock()
@@ -387,7 +412,7 @@ func TestCachingStoreClaimFencedByNewerLocalWrite(t *testing.T) {
 			if !stringSliceContains(events, "bead.updated:"+work.ID) {
 				t.Fatalf("events = %v, want bead.updated for the claimed bead", events)
 			}
-			tc.check(t, cache, work.ID)
+			tc.check(t, cache, work.ID, claimed)
 		})
 	}
 }

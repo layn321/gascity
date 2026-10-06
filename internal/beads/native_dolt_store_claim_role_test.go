@@ -171,8 +171,45 @@ func TestClaimMapsAWispIDToErrWispNotClaimableNotErrNotFound(t *testing.T) {
 	}
 }
 
+// TestClaimMapsAWispPlaneReaderHitToErrWispNotClaimable pins that the wisp
+// verdict covers the whole wisp plane the pinned module's issueops.IsWisp
+// defines, not only ephemeral rows: a no-history row is a wisp too, and an
+// explicit plane override wins over both flags.
+func TestClaimMapsAWispPlaneReaderHitToErrWispNotClaimable(t *testing.T) {
+	onPlane, offPlane := true, false
+	cases := []struct {
+		name     string
+		issue    beadslib.Issue
+		wantWisp bool
+	}{
+		{"no_history", beadslib.Issue{ID: "gc-nh-1", NoHistory: true}, true},
+		{"override_on", beadslib.Issue{ID: "gc-ov-1", WispPlaneOverride: &onPlane}, true},
+		{"override_off_beats_no_history", beadslib.Issue{ID: "gc-ov-2", NoHistory: true, WispPlaneOverride: &offPlane}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &claimRoleSpy{
+				err:       issueops.ErrNotFound,
+				getResult: &issueops.IssueDetails{Issue: tc.issue},
+			}
+			store := newNativeDoltStoreForTest(spy)
+
+			_, claimed, err := store.Claim(tc.issue.ID, "worker-1")
+			if claimed {
+				t.Fatal("claimed = true on a not-found claim")
+			}
+			if got := errors.Is(err, ErrWispNotClaimable); got != tc.wantWisp {
+				t.Errorf("errors.Is(%v, ErrWispNotClaimable) = %v, want %v", err, got, tc.wantWisp)
+			}
+			if !tc.wantWisp && !errors.Is(err, ErrNotFound) {
+				t.Errorf("error = %v, want it to wrap beads.ErrNotFound", err)
+			}
+		})
+	}
+}
+
 // TestClaimMapsANonEphemeralReaderHitToErrNotFound pins that the wisp
-// verdict requires the reader's row to be ephemeral: an ordinary row the
+// verdict requires the reader's row to be on the wisp plane: an ordinary row the
 // reader finds after the claimer missed it (one created between the two
 // reads) is not a wisp, so Claim keeps the claimer's ErrNotFound.
 func TestClaimMapsANonEphemeralReaderHitToErrNotFound(t *testing.T) {

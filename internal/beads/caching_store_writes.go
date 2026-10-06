@@ -267,8 +267,11 @@ func (c *CachingStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, erro
 // for want of a successful refresh; that fallback keeps depsKeepCached, since
 // a claim never changes a bead's dependencies. When a newer local write or
 // deletion touched id while the claim ran, racedWriteLocked refuses the
-// install: the cache keeps the newer row, marked dirty, and Claim still
-// notifies and returns the claimed bead.
+// install: the cache keeps the newer row (marked dirty) or the deletion
+// (tombstoned), and Claim still notifies and returns the claim's own
+// acquisition row rather than the refresh, which may already reflect that
+// newer write. Outside a local race the returned row is the freshest backing
+// row, which can likewise include a remote write that landed after the claim.
 func (c *CachingStore) Claim(id, assignee string) (Bead, bool, error) {
 	claimer, ok := c.backing.(interface {
 		Claim(id, assignee string) (Bead, bool, error)
@@ -289,7 +292,9 @@ func (c *CachingStore) Claim(id, assignee string) (Bead, bool, error) {
 	}
 	c.mu.Lock()
 	raced := c.racedWriteLocked(id, startSeq)
-	if !raced {
+	if raced {
+		updated = cloneBead(claimed)
+	} else {
 		c.noteLocalMutationLocked(id)
 		switch {
 		case refreshed:

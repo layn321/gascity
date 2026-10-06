@@ -1863,11 +1863,11 @@ func nativeReleaseRefused(err error) bool {
 // nativeClaimWispDisambiguationFindsWisp asks the reader role for id, through
 // the reader role, which — unlike the claimer — DOES resolve the wisp table
 // (issueops.Reader.Get's own doc comment: "A miss — for both the issue and
-// the wisp table — is ErrNotFound"). If Get finds the row and that row is
-// ephemeral, it is a wisp, so this front door reports ErrWispNotClaimable
-// instead. A non-ephemeral hit (an ordinary row created between the two
-// reads) is not a wisp. If Get misses, finds a non-ephemeral row, or itself
-// errors, the original ErrNotFound is returned unchanged — a transient
+// the wisp table — is ErrNotFound"). If Get finds the row and that row is on
+// the wisp plane (nativeIssueIsWisp: ephemeral or no-history), it is a wisp,
+// so this front door reports ErrWispNotClaimable instead. A hit off the wisp
+// plane (an ordinary row created between the two reads) is not a wisp. If
+// Get misses, finds a row off the wisp plane, or itself errors, the original ErrNotFound is returned unchanged — a transient
 // failure on this disambiguating read must never manufacture a wisp refusal
 // that was never actually decided, so it degrades to the pre-fix behavior
 // rather than guessing.
@@ -1932,8 +1932,8 @@ func (s *NativeDoltStore) Claim(id, assignee string) (Bead, bool, error) {
 }
 
 // nativeClaimWispDisambiguationFindsWisp asks the reader role for id using the
-// storage handle and ctx Claim already holds, and reports whether it found an
-// ephemeral row. It deliberately does NOT go through s.Get/s.withReadRetry: see the
+// storage handle and ctx Claim already holds, and reports whether it found a
+// row on the wisp plane. It deliberately does NOT go through s.Get/s.withReadRetry: see the
 // "THE DISAMBIGUATING READ" paragraph on Claim's doc comment above for why a
 // second, nested acquisition of s.mu from the same goroutine self-deadlocks.
 // Any failure here (including one that would ordinarily reconnect and retry)
@@ -1945,7 +1945,18 @@ func nativeClaimWispDisambiguationFindsWisp(ctx context.Context, storage beadsli
 		return false
 	}
 	details, err := reader.Get(ctx, issueops.GetRequest{ID: id})
-	return err == nil && details != nil && details.Ephemeral
+	return err == nil && details != nil && nativeIssueIsWisp(&details.Issue)
+}
+
+// nativeIssueIsWisp mirrors the pinned beads module's issueops.IsWisp, which
+// lives under that module's internal/ tree and so cannot be imported: an
+// explicit wisp-plane override wins, otherwise a row is on the wisp plane
+// when it is ephemeral or no-history.
+func nativeIssueIsWisp(issue *beadslib.Issue) bool {
+	if issue.WispPlaneOverride != nil {
+		return *issue.WispPlaneOverride
+	}
+	return issue.Ephemeral || issue.NoHistory
 }
 
 // ErrWispNotClaimable names the refusal Claim reports for an id that exists
