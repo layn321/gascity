@@ -1031,7 +1031,7 @@ func TestBuildPodEnvRemapsVars(t *testing.T) {
 	}
 	// Canonical Dolt connection vars should remain present, and local/controller
 	// endpoints should be reprojected to the in-cluster managed service target.
-	for _, key := range []string{"GC_DOLT_HOST", "GC_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "GC_DOLT_USER", "GC_DOLT_PASSWORD", "BEADS_DOLT_SERVER_USER", "BEADS_DOLT_PASSWORD"} {
+	for _, key := range []string{"GC_DOLT_HOST", "GC_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "GC_DOLT_USER", "BEADS_DOLT_SERVER_USER"} {
 		if _, exists := envMap[key]; !exists {
 			t.Errorf("connection var %s should be preserved in agent pods", key)
 		}

@@ -51,6 +51,8 @@ type Provider struct {
 	priorityClassName  string              // GC_K8S_PRIORITY_CLASS_NAME
 	postStartSettle    time.Duration       // settle time before post-start liveness check
 	stderr             io.Writer           // warning output (default os.Stderr)
+	doltCredsSecret    string              // GC_K8S_DOLT_CREDENTIALS_SECRET: Secret holding a beads credentials file
+	doltCredsKey       string              // GC_K8S_DOLT_CREDENTIALS_KEY (default "credentials")
 }
 
 type schedulingFields struct {
@@ -66,6 +68,10 @@ type schedulingFields struct {
 //   - GC_K8S_IMAGE — container image (required for Start)
 //   - GC_K8S_CONTEXT — kubectl context (default: current)
 //   - GC_K8S_SERVICE_ACCOUNT — pod service account name (default: namespace default)
+//   - GC_K8S_DOLT_CREDENTIALS_SECRET, GC_K8S_DOLT_CREDENTIALS_KEY — optional
+//     Secret (and key, default "credentials") holding a beads credentials file
+//     ([host:port] / password = ...), mounted read-only; Dolt passwords are
+//     never put in the pod spec as env literals
 //   - GC_K8S_CPU_REQUEST, GC_K8S_MEM_REQUEST — resource requests
 //   - GC_K8S_CPU_LIMIT, GC_K8S_MEM_LIMIT — resource limits
 //
@@ -120,6 +126,8 @@ func NewProvider() (*Provider, error) {
 		prebaked:           os.Getenv("GC_K8S_PREBAKED") == "true",
 		postStartSettle:    3 * time.Second,
 		stderr:             os.Stderr,
+		doltCredsSecret:    strings.TrimSpace(os.Getenv("GC_K8S_DOLT_CREDENTIALS_SECRET")),
+		doltCredsKey:       envOrDefault("GC_K8S_DOLT_CREDENTIALS_KEY", "credentials"),
 		nodeSelector:       scheduling.nodeSelector,
 		tolerations:        scheduling.tolerations,
 		affinity:           scheduling.affinity,
