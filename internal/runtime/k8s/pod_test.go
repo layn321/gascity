@@ -302,3 +302,51 @@ func TestBuildPod_InitContainerOnlyWaitsForStaging(t *testing.T) {
 		t.Errorf("init container should wait for staging; got: %s", cmd)
 	}
 }
+
+// f5Sentinel is a fake password used only to prove it never reaches the spec.
+const f5Sentinel = "f5-sentinel-not-a-real-credential"
+
+func f5Config() runtime.Config {
+	return runtime.Config{
+		Command: "/bin/bash",
+		Env: map[string]string{
+			"GC_DOLT_HOST":        "dolt.example",
+			"GC_DOLT_PORT":        "3307",
+			"GC_DOLT_USER":        "agent",
+			"GC_DOLT_PASSWORD":    f5Sentinel,
+			"BEADS_DOLT_PASSWORD": f5Sentinel,
+		},
+	}
+}
+
+func podHasLiteral(pod *corev1.Pod, lit string) bool {
+	for _, c := range append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...) {
+		for _, e := range c.Env {
+			if strings.Contains(e.Value, lit) {
+				return true
+			}
+		}
+		for _, a := range append(append([]string{}, c.Command...), c.Args...) {
+			if strings.Contains(a, lit) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestBuildPod_DoltPasswordNeverLiteral(t *testing.T) {
+	p := newProviderWithOps(newFakeK8sOps())
+	pod, err := buildPod("test-session", f5Config(), p)
+	if err != nil {
+		t.Fatalf("buildPod: %v", err)
+	}
+	if podHasLiteral(pod, f5Sentinel) {
+		t.Error("password literal present in pod spec")
+	}
+	for _, e := range pod.Spec.Containers[0].Env {
+		if e.Name == "GC_DOLT_PASSWORD" || e.Name == "BEADS_DOLT_PASSWORD" {
+			t.Errorf("env %s must not be set on the pod", e.Name)
+		}
+	}
+}
