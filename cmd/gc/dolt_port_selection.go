@@ -14,6 +14,14 @@ import (
 func chooseManagedDoltPort(cityPath, stateFile string) (string, error) {
 	cityPath = normalizePathForCompare(cityPath)
 	envPort := strings.TrimSpace(os.Getenv("GC_DOLT_PORT"))
+	if envPort != "" {
+		// An explicit non-local GC_DOLT_HOST means GC_DOLT_PORT names that
+		// external server's port; the city's managed-local state must not
+		// override it.
+		if _, external := externalDoltEnvOverrideTarget(); external {
+			return envPort, nil
+		}
+	}
 
 	layout, err := resolveManagedDoltRuntimeLayout(cityPath)
 	if err != nil {
