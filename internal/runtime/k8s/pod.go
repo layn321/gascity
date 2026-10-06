@@ -296,9 +296,6 @@ func buildPod(name string, cfg runtime.Config, p *Provider) (*corev1.Pod, error)
 		return nil, err
 	}
 
-	// Dolt credentials file: optional read-only Secret volume. Unset = no change.
-	env = withDoltCredentialsFile(env, p)
-
 	// Build volume mounts for the main container.
 	// When prebaked, skip the ws EmptyDir — it would shadow baked image content.
 	var mainVolMounts []corev1.VolumeMount
@@ -324,22 +321,6 @@ func buildPod(name string, cfg runtime.Config, p *Provider) (*corev1.Pod, error)
 			},
 		},
 	})
-
-	if p.doltCredsSecret != "" {
-		mainVolMounts = append(mainVolMounts, corev1.VolumeMount{
-			Name: doltCredsVolume, MountPath: doltCredsMountDir, ReadOnly: true,
-		})
-		volumes = append(volumes, corev1.Volume{
-			Name: doltCredsVolume, VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: p.doltCredsSecret,
-					// Required when configured: a missing Secret must fail loudly
-					// at pod start, not surface later as an auth error.
-					Items: []corev1.KeyToPath{{Key: p.doltCredsKey, Path: doltCredsFileName}},
-				},
-			},
-		})
-	}
 
 	// If GC_CITY differs from work_dir, add a city volume (not needed when prebaked).
 	if !p.prebaked && ctrlCity != "" && ctrlCity != cfg.WorkDir {
@@ -457,36 +438,14 @@ func agentSecurityContext(linuxUsername string) *corev1.SecurityContext {
 	}
 }
 
-const (
-	doltCredsVolume   = "dolt-credentials"
-	doltCredsMountDir = "/etc/gc/dolt-credentials"
-	doltCredsFileName = "credentials"
-)
-
-// withDoltCredentialsFile points BEADS_CREDENTIALS_FILE (read by
-// internal/doltauth) at the mounted credentials file, replacing any
-// controller-side value. No-op when no credentials Secret is configured.
-func withDoltCredentialsFile(env []corev1.EnvVar, p *Provider) []corev1.EnvVar {
-	if p.doltCredsSecret == "" {
-		return env
-	}
-	out := env[:0:0]
-	for _, e := range env {
-		if e.Name != "BEADS_CREDENTIALS_FILE" {
-			out = append(out, e)
-		}
-	}
-	return append(out, corev1.EnvVar{Name: "BEADS_CREDENTIALS_FILE", Value: doltCredsMountDir + "/" + doltCredsFileName})
-}
-
 // buildPodEnv creates the env var list for the agent container.
 // Removes controller-only vars, strips deprecated K8s compatibility inputs,
 // and remaps pod-visible ones.
 func buildPodEnv(cfgEnv map[string]string, podWorkDir, managedServiceHost, managedServicePort string) ([]corev1.EnvVar, error) {
 	// Start with cfg.Env, removing controller-only vars.
 	// Dolt passwords are never written into the pod spec as literals: a literal
-	// is readable by anyone who can get pods. Pods authenticate from a mounted
-	// credentials file instead (see doltCredentialsMount). User names pass through.
+	// is readable by anyone who can get pods. Credential delivery to the agent is
+	// the credential broker's job, not this provider's. User names pass through.
 	skip := map[string]bool{
 		"GC_DOLT_PASSWORD":       true,
 		"BEADS_DOLT_PASSWORD":    true,

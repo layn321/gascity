@@ -310,12 +310,11 @@ func f5Config() runtime.Config {
 	return runtime.Config{
 		Command: "/bin/bash",
 		Env: map[string]string{
-			"GC_DOLT_HOST":           "dolt.example",
-			"GC_DOLT_PORT":           "3307",
-			"GC_DOLT_USER":           "agent",
-			"GC_DOLT_PASSWORD":       f5Sentinel,
-			"BEADS_DOLT_PASSWORD":    f5Sentinel,
-			"BEADS_CREDENTIALS_FILE": "/controller/side/credentials",
+			"GC_DOLT_HOST":        "dolt.example",
+			"GC_DOLT_PORT":        "3307",
+			"GC_DOLT_USER":        "agent",
+			"GC_DOLT_PASSWORD":    f5Sentinel,
+			"BEADS_DOLT_PASSWORD": f5Sentinel,
 		},
 	}
 }
@@ -337,89 +336,17 @@ func podHasLiteral(pod *corev1.Pod, lit string) bool {
 }
 
 func TestBuildPod_DoltPasswordNeverLiteral(t *testing.T) {
-	for _, configured := range []bool{false, true} {
-		p := newProviderWithOps(newFakeK8sOps())
-		if configured {
-			p.doltCredsSecret, p.doltCredsKey = "beads-dolt-creds-file", "credentials"
-		}
-		pod, err := buildPod("test-session", f5Config(), p)
-		if err != nil {
-			t.Fatalf("buildPod: %v", err)
-		}
-		if podHasLiteral(pod, f5Sentinel) {
-			t.Errorf("configured=%v: password literal present in pod spec", configured)
-		}
-		for _, e := range pod.Spec.Containers[0].Env {
-			if e.Name == "GC_DOLT_PASSWORD" || e.Name == "BEADS_DOLT_PASSWORD" {
-				t.Errorf("configured=%v: env %s must not be set on the pod", configured, e.Name)
-			}
-		}
-	}
-}
-
-func TestBuildPod_DoltCredentialsFileWhenConfigured(t *testing.T) {
-	p := newProviderWithOps(newFakeK8sOps())
-	p.doltCredsSecret, p.doltCredsKey = "beads-dolt-creds-file", "creds"
-	pod, err := buildPod("test-session", f5Config(), p)
-	if err != nil {
-		t.Fatalf("buildPod: %v", err)
-	}
-	var vol *corev1.Volume
-	for i := range pod.Spec.Volumes {
-		if pod.Spec.Volumes[i].Name == doltCredsVolume {
-			vol = &pod.Spec.Volumes[i]
-		}
-	}
-	if vol == nil || vol.Secret == nil || vol.Secret.SecretName != "beads-dolt-creds-file" {
-		t.Fatalf("dolt credentials Secret volume missing or wrong: %+v", vol)
-	}
-	if len(vol.Secret.Items) != 1 || vol.Secret.Items[0].Key != "creds" || vol.Secret.Items[0].Path != doltCredsFileName {
-		t.Errorf("Secret items = %+v", vol.Secret.Items)
-	}
-	if vol.Secret.Optional != nil && *vol.Secret.Optional {
-		t.Error("configured Secret must be required, not optional")
-	}
-	var mounted bool
-	for _, m := range pod.Spec.Containers[0].VolumeMounts {
-		if m.Name == doltCredsVolume {
-			mounted = m.ReadOnly && m.MountPath == doltCredsMountDir
-		}
-	}
-	if !mounted {
-		t.Error("credentials volume not mounted read-only at expected dir")
-	}
-	var vals []string
-	for _, e := range pod.Spec.Containers[0].Env {
-		if e.Name == "BEADS_CREDENTIALS_FILE" {
-			vals = append(vals, e.Value)
-		}
-	}
-	want := doltCredsMountDir + "/" + doltCredsFileName
-	if len(vals) != 1 || vals[0] != want {
-		t.Errorf("BEADS_CREDENTIALS_FILE = %v, want exactly [%s] (controller value replaced)", vals, want)
-	}
-}
-
-func TestBuildPod_DoltCredentialsUnconfiguredUnchanged(t *testing.T) {
 	p := newProviderWithOps(newFakeK8sOps())
 	pod, err := buildPod("test-session", f5Config(), p)
 	if err != nil {
 		t.Fatalf("buildPod: %v", err)
 	}
-	for _, v := range pod.Spec.Volumes {
-		if v.Name == doltCredsVolume {
-			t.Error("credentials volume present while unconfigured")
-		}
+	if podHasLiteral(pod, f5Sentinel) {
+		t.Error("password literal present in pod spec")
 	}
-	for _, m := range pod.Spec.Containers[0].VolumeMounts {
-		if m.Name == doltCredsVolume {
-			t.Error("credentials mount present while unconfigured")
-		}
-	}
-	// Pass-through of unrelated env is unchanged, including the controller's own value.
 	for _, e := range pod.Spec.Containers[0].Env {
-		if e.Name == "BEADS_CREDENTIALS_FILE" && e.Value != "/controller/side/credentials" {
-			t.Errorf("BEADS_CREDENTIALS_FILE rewritten while unconfigured: %q", e.Value)
+		if e.Name == "GC_DOLT_PASSWORD" || e.Name == "BEADS_DOLT_PASSWORD" {
+			t.Errorf("env %s must not be set on the pod", e.Name)
 		}
 	}
 }

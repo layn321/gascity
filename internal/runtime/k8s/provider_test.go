@@ -1036,6 +1036,12 @@ func TestBuildPodEnvRemapsVars(t *testing.T) {
 			t.Errorf("connection var %s should be preserved in agent pods", key)
 		}
 	}
+	// Passwords must not be projected into the pod spec (F5 skip-map).
+	for _, key := range []string{"GC_DOLT_PASSWORD", "BEADS_DOLT_PASSWORD"} {
+		if _, exists := envMap[key]; exists {
+			t.Errorf("password var %s must not be set on agent pods", key)
+		}
+	}
 	if envMap["GC_DOLT_HOST"] != podManagedDoltHost {
 		t.Errorf("GC_DOLT_HOST = %q, want %q", envMap["GC_DOLT_HOST"], podManagedDoltHost)
 	}
