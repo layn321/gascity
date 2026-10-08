@@ -443,8 +443,12 @@ func agentSecurityContext(linuxUsername string) *corev1.SecurityContext {
 // and remaps pod-visible ones.
 func buildPodEnv(cfgEnv map[string]string, podWorkDir, managedServiceHost, managedServicePort string) ([]corev1.EnvVar, error) {
 	// Start with cfg.Env, removing controller-only vars.
-	// Auth creds (GC_DOLT_USER, GC_DOLT_PASSWORD, BEADS_DOLT_*_USER/PASSWORD) intentionally pass through.
+	// Dolt passwords are never written into the pod spec as literals: a literal
+	// is readable by anyone who can get pods. Credential delivery to the agent is
+	// the credential broker's job, not this provider's. User names pass through.
 	skip := map[string]bool{
+		"GC_DOLT_PASSWORD":       true,
+		"BEADS_DOLT_PASSWORD":    true,
 		"GC_BEADS":               true,
 		"GC_SESSION":             true,
 		"GC_EVENTS":              true,
