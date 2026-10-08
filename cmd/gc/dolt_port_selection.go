@@ -14,6 +14,11 @@ import (
 func chooseManagedDoltPort(cityPath, stateFile string) (string, error) {
 	cityPath = normalizePathForCompare(cityPath)
 	envPort := strings.TrimSpace(os.Getenv("GC_DOLT_PORT"))
+	if port := externalDoltPort(cityPath, envPort); port != "" {
+		// The caller is addressing an external Dolt endpoint. A live managed
+		// Dolt on this host must not redirect it to the managed port.
+		return port, nil
+	}
 
 	layout, err := resolveManagedDoltRuntimeLayout(cityPath)
 	if err != nil {
@@ -76,6 +81,25 @@ func chooseManagedDoltPort(cityPath, stateFile string) (string, error) {
 	}
 	seed := deterministicManagedDoltPortSeed(cityPath)
 	return strconv.Itoa(nextAvailableManagedDoltPort(seed)), nil
+}
+
+// externalDoltPort returns the port of an external Dolt endpoint, or "" when
+// the caller is not addressing one. A city configured external uses its own
+// configured port (it wins over an ambient GC_DOLT_PORT); otherwise an explicit
+// non-local GC_DOLT_HOST makes GC_DOLT_PORT the external port.
+func externalDoltPort(cityPath, envPort string) string {
+	if isExternalDolt(cityPath) {
+		if port := strings.TrimSpace(doltPortForCity(cityPath)); port != "" {
+			return port
+		}
+		return envPort
+	}
+	if envPort != "" {
+		if _, ok := externalDoltEnvOverrideTarget(); ok {
+			return envPort
+		}
+	}
+	return ""
 }
 
 func repairedManagedDoltRuntimeState(_ string, layout managedDoltRuntimeLayout, state doltRuntimeState) (doltRuntimeState, bool) {

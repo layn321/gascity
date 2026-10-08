@@ -1113,6 +1113,11 @@ var verifyManagedDoltDatabaseExistsAfterInit = func(cityPath, dir, dbName string
 		// that DB is already proven by bd init's own connection.
 		return nil
 	}
+	if target, ok, err := canonicalScopeDoltTarget(cityPath, dir); err == nil && ok && target.External {
+		// A rig (or other scope) bound to an external Dolt keeps its database on
+		// that server, not in the city's managed-local catalog.
+		return nil
+	}
 	port := currentResolvableManagedDoltPort(cityPath)
 	if port == "" {
 		return nil
